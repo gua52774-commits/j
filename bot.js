@@ -1,220 +1,205 @@
 const TelegramBot = require('node-telegram-bot-api');
 
-// ⚠️ Ganti dengan token bot kamu
+// ⚠️ Ganti token bot kamu
 const TOKEN = '8185460043:AAFKlFSdQ6nQe1J1NOUhWvTuWFb012_oSpQ';
 const bot = new TelegramBot(TOKEN, { polling: true });
 
 const users = new Map();
 let waiting = [];
 
-// Fungsi aman untuk kirim pesan
+// ====== FUNGSI BLOKIR LINK ======
+function containsLink(text = "") {
+  const regex = /(https?:\/\/|www\.|t\.me\/|telegram\.me\/)/i;
+  return regex.test(text);
+}
+
+// ====== FUNGSI KIRIM PESAN AMAN ======
 async function safeSendMessage(chatId, text, options = {}) {
   try {
     await bot.sendMessage(chatId, text, options);
   } catch (err) {
-    handleSendError(err, chatId);
+    console.error("Error send message:", err.message);
   }
 }
 
-// Fungsi aman untuk kirim media
+// ====== FUNGSI KIRIM MEDIA AMAN ======
 async function safeSendMedia(type, chatId, ...args) {
   try {
     await bot[type](chatId, ...args);
   } catch (err) {
-    handleSendError(err, chatId);
+    console.error("Error send media:", err.message);
   }
 }
 
-// Penanganan error kirim
-function handleSendError(err, chatId) {
-  if (err.response && err.response.statusCode === 403) {
-    console.warn(`⚠️ User ${chatId} telah memblokir bot. Menghapus dari daftar.`);
-    users.delete(chatId);
-    waiting = waiting.filter(id => id !== chatId);
-  } else {
-    console.error('❌ Error kirim pesan:', err.message);
-  }
-}
-
-// 🔹 /start
+// ====== START ======
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   users.set(chatId, { partner: null });
 
-  const options = {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [[{ text: '😄 Mulai Chat', callback_data: 'start_chat' }]],
-    },
-  };
-
-  safeSendMessage(
-    chatId,
-    `👋 *Selamat datang di Anonymous Chat Bot!*\n\nTekan tombol di bawah untuk mulai mencari teman ngobrol anonim.\n\nKetik */help* untuk melihat panduan lengkap.`,
-    options
+  safeSendMessage(chatId,
+    `👋 *Selamat datang di Anonymous Chat Bot!*\n\nTekan tombol di bawah untuk mulai mencari partner.`,
+    {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [[{ text: "😄 Mulai Chat", callback_data: "start_chat" }]]
+      }
+    }
   );
 });
 
-// 🔹 Callback tombol "Mulai Chat"
-bot.on('callback_query', (query) => {
-  const chatId = query.message.chat.id;
-  if (query.data === 'start_chat') {
-    bot.answerCallbackQuery(query.id, { text: '🔍 Mencari partner...' });
-    findPartner(chatId);
+bot.on("callback_query", (query) => {
+  if (query.data === "start_chat") {
+    findPartner(query.message.chat.id);
   }
 });
 
-// 🔹 /next dan /search
-bot.onText(/\/next|\/search/, (msg) => {
-  const chatId = msg.chat.id;
-  findPartner(chatId);
-});
+// ====== PERINTAH ======
+bot.onText(/\/next|\/search/, (msg) => findPartner(msg.chat.id));
+bot.onText(/\/stop/, (msg) => stopChat(msg.chat.id));
 
-// 🔹 /stop
-bot.onText(/\/stop/, (msg) => {
-  const chatId = msg.chat.id;
-  stopChat(chatId, true, false); // tidak otomatis cari partner baru
-});
-
-// 🔹 /help
 bot.onText(/\/help/, (msg) => {
-  const helpText = `
-📚 *Panduan Anonymous Chat Bot*
-
-Perintah yang tersedia:
-• /start — Memulai bot
-• /next atau /search — Ganti partner
-• /stop — Hentikan chat atau pencarian
-• /link — Kirim username kamu ke partner
-• /help — Tampilkan panduan
-• /support — Dukung bot dengan donasi
-  `;
-  safeSendMessage(msg.chat.id, helpText, { parse_mode: 'Markdown' });
+  safeSendMessage(msg.chat.id,
+    `📚 *Panduan Anonymous Chat Bot*\n\n• /start — memulai bot\n• /next — partner baru\n• /stop — berhenti chat\n• /link — lihat username partner`,
+    { parse_mode: "Markdown" }
+  );
 });
 
-// 🔹 /support
-bot.onText(/\/support/, (msg) => {
-  const chatId = msg.chat.id;
-  safeSendMedia('sendPhoto', chatId, 'https://files.catbox.moe/mxovdq.jpg', {
-    caption: '☕ Scan QR di atas untuk donasi. Terima kasih atas dukungannya!',
-  });
-});
-
-// 🔹 /link
+// ====== /link ======
 bot.onText(/\/link/, (msg) => {
   const chatId = msg.chat.id;
-  const user = msg.from;
   const partnerId = users.get(chatId)?.partner;
 
-  if (!user.username) {
-    return safeSendMessage(
-      chatId,
-      `⚠️ Kamu belum memiliki username Telegram.\nSilakan buat di *Pengaturan > Akun > Username*.`,
-      { parse_mode: 'Markdown' }
-    );
+  if (!partnerId) {
+    safeSendMessage(chatId, "⚠️ Kamu belum terhubung dengan siapa pun.");
+    return;
   }
 
-  const usernameLink = `https://t.me/${user.username}`;
+  const partner = users.get(partnerId);
 
-  if (!partnerId) {
-    safeSendMessage(
-      chatId,
-      `🔗 Username kamu: [@${user.username}](${usernameLink})\nGunakan perintah ini saat sedang chatting.`,
-      { parse_mode: 'Markdown' }
-    );
+  if (!partner || !partner.username) {
+    safeSendMessage(chatId, "Partner kamu tidak memiliki username.");
   } else {
-    safeSendMessage(
-      partnerId,
-      `🔗 Partner kamu membagikan link Telegram-nya:\n👉 [@${user.username}](${usernameLink})`,
-      { parse_mode: 'Markdown' }
-    );
-    safeSendMessage(chatId, `✅ Username kamu telah dikirim ke partner.`);
+    safeSendMessage(chatId, `Username partner kamu: *@${partner.username}*`, { parse_mode: "Markdown" });
   }
 });
 
-// 🔹 Kirim pesan antar user
-bot.on('message', (msg) => {
+// ====== TERIMA SEMUA PESAN ======
+bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
-  if (msg.text && msg.text.startsWith('/')) return;
+
+  if (msg.text?.startsWith("/")) return;
 
   const user = users.get(chatId);
-  if (!user) return;
+  if (!user || !user.partner) return;
 
   const partnerId = user.partner;
-  if (partnerId && users.has(partnerId)) {
-    forwardMessage(chatId, partnerId, msg);
+
+  // ==== BLOKIR LINK ====
+  if (msg.text && containsLink(msg.text)) {
+    safeSendMessage(chatId, "❌ Link tidak diperbolehkan! Kamu hanya boleh mengirim *username* (@username).", {
+      parse_mode: "Markdown"
+    });
+    return;
   }
+
+  forwardMessage(chatId, partnerId, msg);
 });
 
-// 🔹 Fungsi mencari partner (acak)
+// ====== MENCARI PARTNER ======
 function findPartner(chatId) {
   const user = users.get(chatId) || {};
-  if (user.partner) stopChat(chatId, false);
 
-  // Jika sedang menunggu, hapus dulu agar tidak duplikat
+  if (user.partner) stopChat(chatId);
+
   waiting = waiting.filter(id => id !== chatId);
 
   if (waiting.length > 0) {
-    // Pilih partner acak
-    const randomIndex = Math.floor(Math.random() * waiting.length);
-    const partnerId = waiting.splice(randomIndex, 1)[0];
+    const partnerId = waiting.splice(0, 1)[0];
+
     if (partnerId === chatId) return;
 
-    users.set(chatId, { partner: partnerId });
-    users.set(partnerId, { partner: chatId });
+    const userData = users.get(chatId);
+    const partnerData = users.get(partnerId);
 
-    safeSendMessage(chatId, `😺 Partner found!\n\n/next — cari baru\n/stop — hentikan chat`);
-    safeSendMessage(partnerId, `😺 Partner found!\n\n/next — cari baru\n/stop — hentikan chat`);
+    users.set(chatId, { partner: partnerId, username: userData?.username });
+    users.set(partnerId, { partner: chatId, username: partnerData?.username });
 
-    safeSendMessage(chatId, `👋 Kamu sudah terhubung! Mulai ngobrol sekarang.`);
-    safeSendMessage(partnerId, `👋 Kamu sudah terhubung! Mulai ngobrol sekarang.`);
+    safeSendMessage(chatId, "😺 Partner ditemukan! Mulai ngobrol.");
+    safeSendMessage(partnerId, "😺 Partner ditemukan! Mulai ngobrol.");
   } else {
     waiting.push(chatId);
-    safeSendMessage(chatId, `🚀 Mencari partner...\nSilakan tunggu seseorang untuk terhubung.`);
+    safeSendMessage(chatId, "🔍 Mencari partner...");
   }
 }
 
-// 🔹 Fungsi menghentikan chat
-function stopChat(chatId, notify = true, autoFind = false) {
+// ====== HENTIKAN CHAT ======
+function stopChat(chatId) {
   const user = users.get(chatId);
   if (!user) return;
 
   const partnerId = user.partner;
-  waiting = waiting.filter(id => id !== chatId); // Hapus dari antrian
+
+  waiting = waiting.filter(id => id !== chatId);
 
   if (partnerId && users.has(partnerId)) {
     users.set(partnerId, { partner: null });
-    safeSendMessage(partnerId, `😞 Partner kamu menghentikan chat.`);
+    safeSendMessage(partnerId, "😞 Partner meninggalkan chat.");
   }
 
   users.set(chatId, { partner: null });
-  if (notify) safeSendMessage(chatId, `🙄 Kamu menghentikan chat.`);
+  safeSendMessage(chatId, "🙄 Kamu menghentikan chat.");
+}
 
-  if (autoFind) {
-    setTimeout(() => {
-      safeSendMessage(chatId, `🔍 Mencari partner baru...`);
-      findPartner(chatId);
-    }, 1000);
+// ====== FORWARD PESAN (DENGAN REPLY) ======
+async function forwardMessage(fromId, toId, msg) {
+  let replyId = null;
+
+  if (msg.reply_to_message) {
+    // Buat mapping id pesan agar reply tetap nyambung
+    replyId = msg.reply_to_message.forwarded_msg_id || null;
+  }
+
+  let sent;
+
+  // TEXT
+  if (msg.text) {
+    sent = await bot.sendMessage(toId, msg.text, { reply_to_message_id: replyId });
+  }
+
+  // MEDIA (support semua tipe)
+  else if (msg.photo) {
+    sent = await bot.sendPhoto(toId, msg.photo.at(-1).file_id, {
+      caption: msg.caption || "",
+      reply_to_message_id: replyId
+    });
+  }
+  else if (msg.video)
+    sent = await bot.sendVideo(toId, msg.video.file_id, { caption: msg.caption || "", reply_to_message_id: replyId });
+
+  else if (msg.animation)
+    sent = await bot.sendAnimation(toId, msg.animation.file_id, { caption: msg.caption || "", reply_to_message_id });
+
+  else if (msg.sticker)
+    sent = await bot.sendSticker(toId, msg.sticker.file_id, { reply_to_message_id });
+
+  else if (msg.voice)
+    sent = await bot.sendVoice(toId, msg.voice.file_id, { reply_to_message_id });
+
+  else if (msg.audio)
+    sent = await bot.sendAudio(toId, msg.audio.file_id, { caption: msg.caption || "", reply_to_message_id });
+
+  else if (msg.document)
+    sent = await bot.sendDocument(toId, msg.document.file_id, { caption: msg.caption || "", reply_to_message_id });
+
+  else if (msg.video_note)
+    sent = await bot.sendVideoNote(toId, msg.video_note.file_id, { reply_to_message_id });
+
+  else if (msg.location)
+    sent = await bot.sendLocation(toId, msg.location.latitude, msg.location.longitude, { reply_to_message_id });
+
+  if (sent) {
+    msg.forwarded_msg_id = sent.message_id;
   }
 }
 
-// 🔹 Fungsi meneruskan pesan
-function forwardMessage(fromId, toId, msg) {
-  try {
-    if (msg.text) safeSendMessage(toId, msg.text);
-    else if (msg.photo) safeSendMedia('sendPhoto', toId, msg.photo.at(-1).file_id, { caption: msg.caption || '' });
-    else if (msg.video) safeSendMedia('sendVideo', toId, msg.video.file_id, { caption: msg.caption || '' });
-    else if (msg.voice) safeSendMedia('sendVoice', toId, msg.voice.file_id);
-    else if (msg.audio) safeSendMedia('sendAudio', toId, msg.audio.file_id);
-    else if (msg.document) safeSendMedia('sendDocument', toId, msg.document.file_id, { caption: msg.caption || '' });
-    else if (msg.sticker) safeSendMedia('sendSticker', toId, msg.sticker.file_id);
-    else if (msg.video_note) safeSendMedia('sendVideoNote', toId, msg.video_note.file_id);
-    else if (msg.animation) safeSendMedia('sendAnimation', toId, msg.animation.file_id, { caption: msg.caption || '' });
-    else if (msg.location) safeSendMedia('sendLocation', toId, msg.location.latitude, msg.location.longitude);
-    else if (msg.contact) safeSendMedia('sendContact', toId, msg.contact.phone_number, msg.contact.first_name);
-  } catch (err) {
-    handleSendError(err, toId);
-  }
-}
-
-console.log('🤖 Bot is running...');
+console.log("🤖 Bot berjalan...");
