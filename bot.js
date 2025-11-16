@@ -106,6 +106,7 @@ bot.on("message", async (msg) => {
 });
 
 // ====== MENCARI PARTNER ======
+// ====== MENCARI PARTNER ======
 function findPartner(chatId) {
   const user = users.get(chatId) || {};
 
@@ -124,8 +125,17 @@ function findPartner(chatId) {
     users.set(chatId, { partner: partnerId, username: userData?.username });
     users.set(partnerId, { partner: chatId, username: partnerData?.username });
 
-    safeSendMessage(chatId, "😺 Partner ditemukan! Mulai ngobrol.");
-    safeSendMessage(partnerId, "😺 Partner ditemukan! Mulai ngobrol.");
+    const foundText = 
+`😺 *Partner ditemukan!*
+
+/next — Mencari partner baru
+/stop — Menghentikan chat
+
+👋 Kamu sudah terhubung! Mulai ngobrol sekarang.`;
+
+    safeSendMessage(chatId, foundText, { parse_mode: "Markdown" });
+    safeSendMessage(partnerId, foundText, { parse_mode: "Markdown" });
+
   } else {
     waiting.push(chatId);
     safeSendMessage(chatId, "🔍 Mencari partner...");
@@ -203,3 +213,4 @@ async function forwardMessage(fromId, toId, msg) {
 }
 
 console.log("🤖 Bot berjalan...");
+
